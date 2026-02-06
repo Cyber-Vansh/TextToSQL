@@ -3,8 +3,10 @@
 import { useState, useEffect, useRef } from 'react';
 import { 
   Send, Database, Table as TableIcon, Code, 
-  Loader2, Terminal, Sparkles, ChevronRight, History 
+  Loader2, Terminal, Sparkles, ChevronRight, History, LogOut
 } from 'lucide-react';
+import { useAuth } from '@/context/AuthContext';
+
 
 interface ChatMessage {
   id: string;
@@ -21,6 +23,7 @@ interface ChatMessage {
   }
 
   export default function Home() {
+    const { user, token, logout } = useAuth();
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [input, setInput] = useState('');
     const [loading, setLoading] = useState(false);
@@ -47,12 +50,22 @@ interface ChatMessage {
         return [];
       }
     };
-  
     const fetchHistory = async () => {
+      if (!token) return;
       try {
-        const res = await fetch('http://localhost:3000/api/history');
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+        const res = await fetch(`${apiUrl}/api/history`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        
+        if (res.status === 401) return logout();
+        
         const data = await res.json();
-        setHistory(data);
+        if (Array.isArray(data)) {
+          setHistory(data);
+        } else {
+          setHistory([]);
+        }
       } catch (err) {
         console.error("Failed to fetch history:", err);
       }
@@ -74,11 +87,17 @@ interface ChatMessage {
       setLoading(true);
   
       try {
-        const res = await fetch('http://localhost:3000/api/chat', {
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+        const res = await fetch(`${apiUrl}/api/chat`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
           body: JSON.stringify({ question: userMsg.content, sessionId })
         });
+        
+        if (res.status === 401) return logout();
   
         const data = await res.json();
         
@@ -104,7 +123,11 @@ interface ChatMessage {
   
     const loadHistoryItem = async (session: HistoryItem) => {
       try {
-        const res = await fetch(`http://localhost:3000/api/history/${session._id}`);
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+        const res = await fetch(`${apiUrl}/api/history/${session._id}`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (res.status === 401) return logout();
         const data = await res.json();
         
         if (data.messages) {
@@ -141,6 +164,18 @@ interface ChatMessage {
               </div>
               <span className="font-semibold text-sm tracking-wide text-zinc-100">DataPilot AI</span>
             </div>
+
+            {user && (
+              <div className="mb-6 p-3 rounded-lg bg-zinc-800/30 border border-zinc-800 flex items-center justify-between">
+                <div className="flex flex-col">
+                  <span className="text-xs text-zinc-500">Signed in as</span>
+                  <span className="text-sm font-medium text-zinc-300 truncate max-w-[140px]">{user.email}</span>
+                </div>
+                <button onClick={logout} className="p-1.5 hover:bg-zinc-700 rounded-md text-zinc-400 hover:text-white transition-colors" title="Sign out">
+                  <LogOut className="w-4 h-4" />
+                </button>
+              </div>
+            )}
   
             <button 
               onClick={startNewQuery}
@@ -157,15 +192,21 @@ interface ChatMessage {
                History
              </div>
              <div className="space-y-1">
-               {history.map((item) => (
-                 <button 
-                   key={item._id}
-                   onClick={() => loadHistoryItem(item)}
-                   className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors truncate ${sessionId === item._id ? 'bg-zinc-800 text-zinc-200' : 'hover:bg-zinc-800/50 text-zinc-400 hover:text-zinc-200'}`}
-                 >
-                   {item.title || "Untitled Chat"}
-                 </button>
-               ))}
+                <button 
+                  onClick={startNewQuery}
+                  className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors truncate ${!sessionId ? 'bg-zinc-800 text-zinc-200' : 'hover:bg-zinc-800/50 text-zinc-400 hover:text-zinc-200'}`}
+                >
+                  New Chat
+                </button>
+                {history.map((item) => (
+                  <button 
+                    key={item._id}
+                    onClick={() => loadHistoryItem(item)}
+                    className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors truncate ${sessionId === item._id ? 'bg-zinc-800 text-zinc-200' : 'hover:bg-zinc-800/50 text-zinc-400 hover:text-zinc-200'}`}
+                  >
+                    {item.title || "Untitled Chat"}
+                  </button>
+                ))}
                {history.length === 0 && (
                  <div className="px-3 py-2 text-sm text-zinc-600 italic">No history yet.</div>
                )}

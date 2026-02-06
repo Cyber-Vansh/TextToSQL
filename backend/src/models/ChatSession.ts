@@ -9,6 +9,7 @@ const MessageSchema = new mongoose.Schema({
 });
 
 const ChatSessionSchema = new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   title: { type: String },
   messages: [MessageSchema],
   createdAt: { type: Date, default: Date.now },
