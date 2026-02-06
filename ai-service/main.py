@@ -51,8 +51,6 @@ async def process_query(request: QueryRequest):
         chain = create_sql_query_chain(llm, db)
         response = chain.invoke({"question": request.question})
         
-        # Step 2: Clean the SQL
-        # Sometimes Gemini returns "Question: ... \n SQLQuery: SELECT ..."
         cleaned_sql = response
         if "SQLQuery:" in response:
             cleaned_sql = response.split("SQLQuery:")[1]
