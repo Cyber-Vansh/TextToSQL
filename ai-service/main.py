@@ -129,7 +129,7 @@ async def process_query(request: QueryRequest):
         
         cleaned_sql = response
         
-        code_block_pattern = r"```(?:sql|mysql|sqlite)?\s*(.*?)```"
+        code_block_pattern = r"```(?:sqlite|mysql|sql)?\s*(.*?)```"
         match = re.search(code_block_pattern, cleaned_sql, re.DOTALL | re.IGNORECASE)
         if match:
             cleaned_sql = match.group(1)
