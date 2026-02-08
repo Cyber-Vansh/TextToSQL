@@ -96,11 +96,19 @@ export default function Home() {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.status === 401) return logout();
+      if (!res.ok) {
+        throw new Error(`Failed to fetch projects: ${res.status} ${res.statusText}`);
+      }
       const data = await res.json();
-      setProjects(data);
-
-      if (data.length > 0 && !selectedProjectId) {
-        setSelectedProjectId(data[0]._id);
+      
+      if (Array.isArray(data)) {
+        setProjects(data);
+        if (data.length > 0 && !selectedProjectId) {
+          setSelectedProjectId(data[0]._id);
+        }
+      } else {
+        console.error("Failed to fetch projects, received non-array:", data);
+        setProjects([]);
       }
     } catch (err) {
       console.error("Failed to fetch projects:", err);

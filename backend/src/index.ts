@@ -101,6 +101,7 @@ app.get('/api/projects', authMiddleware, async (req: AuthRequest, res: Response)
     const projects = await Project.find({ userId: req.user.id }).sort({ createdAt: -1 });
     res.json(projects);
   } catch (error) {
+    console.error("Error fetching projects:", error);
     res.status(500).json({ error: 'Failed to fetch projects' });
   }
 });
