@@ -24,6 +24,7 @@ class DBConnection(BaseModel):
 class QueryRequest(BaseModel):
     question: str
     db_connection: DBConnection
+    history: list[str] = []
 
 @app.get("/")
 def home():
@@ -63,8 +64,6 @@ async def process_query(request: QueryRequest):
             
             db_uri = f"mysql+pymysql://{user}:{encoded_password}@{host}:{port}/{database}"
             
-
-            
             engine = create_engine(db_uri)
             db = SQLDatabase(engine)
         
@@ -92,9 +91,6 @@ async def process_query(request: QueryRequest):
         else:
              raise HTTPException(status_code=400, detail="Invalid database type")
 
-
-
-        
         from langchain_core.prompts import PromptTemplate
 
         db_name = request.db_connection.config.get('database', 'data') if request.db_connection.type == 'mysql' else 'data'
@@ -125,39 +121,68 @@ async def process_query(request: QueryRequest):
             - CRITICAL: Generate a SINGLE SQL query. Do NOT generate multiple queries separated by semicolons.
             """
         
-        prompt = PromptTemplate.from_template(system_prompt + "\n\nOnly use the following tables:\n{table_info}\n\nQuestion: {input}\n\nLimit: {top_k}")
+        chat_history_str = "\n".join(request.history) if request.history else "No previous history."
         
+        full_prompt_template = system_prompt + f"""
+        
+        Previous Conversation History:
+        {chat_history_str}
+        
+        Only use the following tables:
+        {{table_info}}
+        
+        Question: {{input}}
+        
+        Limit: {{top_k}}
+        """
+        
+        prompt = PromptTemplate.from_template(full_prompt_template)
         chain = create_sql_query_chain(llm, db, k=100, prompt=prompt)
-        response = chain.invoke({"question": request.question})
         
-        cleaned_sql = response
+        max_retries = 3
+        last_error = None
+        current_question = request.question
         
-        code_block_pattern = r"```(?:sqlite|mysql|sql)?\s*(.*?)```"
-        match = re.search(code_block_pattern, cleaned_sql, re.DOTALL | re.IGNORECASE)
-        if match:
-            cleaned_sql = match.group(1)
-        
+        for attempt in range(max_retries):
+            try:
+                if attempt > 0:
+                    print(f"Self-correction attempt {attempt}: Retrying with error context...")
+                    current_question = f"{request.question}\n\nThe previous query failed with error: {last_error}\nPlease fix the SQL."
 
-        if "SQLQuery:" in cleaned_sql:
-            cleaned_sql = cleaned_sql.split("SQLQuery:")[1]
-            
-        cleaned_sql = cleaned_sql.strip()
+                response = chain.invoke({"question": current_question})
+                cleaned_sql = response
+                
+                code_block_pattern = r"```(?:sqlite|mysql|sql)?\s*(.*?)```"
+                match = re.search(code_block_pattern, cleaned_sql, re.DOTALL | re.IGNORECASE)
+                if match:
+                    cleaned_sql = match.group(1)
+
+                if "SQLQuery:" in cleaned_sql:
+                    cleaned_sql = cleaned_sql.split("SQLQuery:")[1]
+                    
+                cleaned_sql = cleaned_sql.strip()
+                
+                result_data = []
+                with engine.connect() as connection:
+                    result_proxy = connection.execute(text(cleaned_sql))
+                    if result_proxy.returns_rows:
+                        keys = result_proxy.keys()
+                        result_data = [
+                            {key: serialize_value(value) for key, value in zip(keys, row)}
+                            for row in result_proxy.fetchall()
+                        ]
+                
+                return {
+                    "question": request.question,
+                    "sql": cleaned_sql,
+                    "data": result_data
+                }
+
+            except Exception as e:
+                print(f"Error executing SQL (Attempt {attempt+1}/{max_retries}): {e}")
+                last_error = str(e)
         
-        result_data = []
-        with engine.connect() as connection:
-            result_proxy = connection.execute(text(cleaned_sql))
-            if result_proxy.returns_rows:
-                keys = result_proxy.keys()
-                result_data = [
-                    {key: serialize_value(value) for key, value in zip(keys, row)}
-                    for row in result_proxy.fetchall()
-                ]
-        
-        return {
-            "question": request.question,
-            "sql": cleaned_sql,
-            "data": result_data
-        }
+        raise HTTPException(status_code=500, detail=f"Failed to generate valid SQL after {max_retries} attempts. Last error: {last_error}")
 
     except Exception as e:
         print(f"Error processing query: {e}")

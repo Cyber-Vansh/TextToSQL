@@ -13,7 +13,6 @@ import path from 'path';
 import fs from 'fs';
 import { Project, IProject } from './models/Project';
 
-
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     const uploadDir = 'uploads/';
@@ -23,7 +22,6 @@ const storage = multer.diskStorage({
     cb(null, uploadDir);
   },
   filename: (req, file, cb) => {
-
     cb(null, `${Date.now()}-${file.originalname}`);
   }
 });
@@ -78,7 +76,7 @@ mongoose.connect(MONGO_URI)
 app.get('/api/health', async (req: Request, res: Response) => {
   console.log(`[Health Check] Checking AI Service at ${AI_SERVICE_URL}...`);
   try {
-    const aiHealth = await axios.get(`${AI_SERVICE_URL}/`, { timeout: 2000 });
+    const aiHealth = await axios.get(`${AI_SERVICE_URL}/`, { timeout: 10000 });
     console.log(`[Health Check] AI Service responded: ${aiHealth.status}`);
     res.json({ 
       status: 'ok', 
@@ -130,9 +128,6 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
   }
 });
 
-
-
-
 app.get('/api/projects', authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
     const projects = await Project.find({ userId: req.user.id }).sort({ createdAt: -1 });
@@ -142,7 +137,6 @@ app.get('/api/projects', authMiddleware, async (req: AuthRequest, res: Response)
     res.status(500).json({ error: 'Failed to fetch projects' });
   }
 });
-
 
 app.post('/api/projects', authMiddleware, async (req: AuthRequest, res: Response) => {
   const { name, type, dbConfig } = req.body;
@@ -193,7 +187,6 @@ app.delete('/api/projects/:id', authMiddleware, async (req: AuthRequest, res: Re
     res.status(500).json({ error: 'Failed to delete project' });
   }
 });
-
 
 app.post('/api/projects/upload', authMiddleware, upload.single('file'), async (req: AuthRequest, res: Response) => {
   const { name } = req.body;
@@ -275,7 +268,6 @@ app.post('/api/chat', authMiddleware, async (req: AuthRequest, res: Response) =>
     return res.status(400).json({ error: 'Question is required' });
   }
 
-
   if (!sessionId && !projectId) {
     return res.status(400).json({ error: 'Project ID is required for new chats' });
   }
@@ -284,16 +276,13 @@ app.post('/api/chat', authMiddleware, async (req: AuthRequest, res: Response) =>
     let project;
     let session;
 
-
     if (sessionId) {
       session = await ChatSession.findOne({ _id: sessionId, userId: req.user.id }).populate('projectId');
       if (session) {
-
          project = session.projectId;
       }
     } 
     
-
     if (!project && projectId) {
       project = await Project.findOne({ _id: projectId, userId: req.user.id });
     }
@@ -301,8 +290,6 @@ app.post('/api/chat', authMiddleware, async (req: AuthRequest, res: Response) =>
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
-
-
 
     const proj = project as any;
     
@@ -320,9 +307,18 @@ app.post('/api/chat', authMiddleware, async (req: AuthRequest, res: Response) =>
        }
     }
 
+    let history: string[] = [];
+    if (session && session.messages) {
+       const lastMessages = session.messages.slice(-10);
+       history = lastMessages.map((msg: any) => {
+          return `${msg.role === 'user' ? 'User' : 'AI'}: ${msg.content}`; 
+       });
+    }
+
     const aiResponse = await axios.post(`${AI_SERVICE_URL}/query`, { 
       question,
-      db_connection: dbConnection
+      db_connection: dbConnection,
+      history
     });
     const { sql, data } = aiResponse.data;
 
