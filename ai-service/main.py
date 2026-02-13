@@ -273,3 +273,93 @@ async def get_schema(request: SchemaRequest):
     except Exception as e:
         print(f"Error fetching schema: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/suggest_questions")
+async def suggest_questions(request: SchemaRequest):
+    try:
+        engine = None
+        
+        if request.db_connection.type == 'mysql':
+            from urllib.parse import quote_plus
+            config = request.db_connection.config
+            host = config.get('host', 'localhost')
+            port = int(config.get('port', 3306))
+            user = config.get('user', '')
+            password = config.get('password', '')
+            database = config.get('database', '')
+            
+            if ':' in host:
+                host = host.split(':')[0]
+            if host in ['localhost', '127.0.0.1']:
+                 host = 'host.docker.internal'
+
+            encoded_password = quote_plus(password)
+            db_uri = f"mysql+pymysql://{user}:{encoded_password}@{host}:{port}/{database}"
+            engine = create_engine(db_uri)
+
+        elif request.db_connection.type == 'csv':
+            import io
+            
+            engine = create_engine(
+                "sqlite://", 
+                poolclass=StaticPool,
+                connect_args={"check_same_thread": False}
+            )
+
+            if 'csvContent' in request.db_connection.config:
+                csv_content = request.db_connection.config['csvContent']
+                df = pd.read_csv(io.StringIO(csv_content))
+            else:
+                csv_path = request.db_connection.config.get('csvPath')
+                filename = os.path.basename(csv_path)
+                full_path = f"/app/uploads/{filename}"
+                df = pd.read_csv(full_path)
+
+            df.to_sql("data", engine, index=False, if_exists='replace')
+        
+        else:
+            raise HTTPException(status_code=400, detail="Invalid database type")
+
+        from sqlalchemy import inspect
+        inspector = inspect(engine)
+        table_names = inspector.get_table_names()
+        
+        schema_summary = []
+        for table_name in table_names:
+            columns = [col['name'] for col in inspector.get_columns(table_name)]
+            schema_summary.append(f"Table: {table_name}, Columns: {', '.join(columns)}")
+        
+        schema_str = "\n".join(schema_summary)
+        
+        prompt = f"""
+        Analyze the following database schema:
+        {schema_str}
+
+        Generate 3 diverse, interesting, and valid natural language questions a user might ask about this data.
+        Return ONLY a JSON list of strings, e.g., ["Question 1?", "Question 2?", "Question 3?"].
+        Do not output any markdown formatting or explanations.
+        """
+        
+        response = llm.invoke(prompt)
+        content = response.content.strip()
+        
+        import json
+        try:
+            if "```json" in content:
+                content = content.split("```json")[1].split("```")[0].strip()
+            elif "```" in content:
+                content = content.split("```")[1].split("```")[0].strip()
+                
+            questions = json.loads(content)
+            return {"questions": questions}
+        except Exception as e:
+            print(f"Error parsing questions: {content}, Error: {e}")
+            return {"questions": [
+                "Show me the first 5 rows of data",
+                "Count the total number of records",
+                "List all tables in the database"
+            ]}
+
+    except Exception as e:
+        print(f"Error suggesting questions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

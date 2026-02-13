@@ -238,16 +238,71 @@ app.get('/api/projects/:id/schema', authMiddleware, async (req: AuthRequest, res
   }
 });
 
+app.get('/api/projects/:id/suggestions', authMiddleware, async (req: AuthRequest, res: Response) => {
+  try {
+    const project = await Project.findOne({ _id: req.params.id, userId: req.user.id });
+    if (!project) return res.status(404).json({ error: 'Project not found' });
+
+    const proj = project as any;
+    const dbConnection: any = {
+      type: proj.type,
+      config: proj.type === 'mysql' ? proj.dbConfig : { csvPath: proj.csvPath }
+    };
+
+    if (proj.type === 'csv' && proj.csvPath) {
+      try {
+        const fileContent = fs.readFileSync(proj.csvPath, 'utf8');
+        dbConnection.config.csvContent = fileContent;
+      } catch (err) {
+        console.error("Error reading CSV file:", err);
+      }
+    }
+
+    const aiResponse = await axios.post(`${AI_SERVICE_URL}/suggest_questions`, { 
+      db_connection: dbConnection
+    });
+
+    res.json(aiResponse.data);
+  } catch (error) {
+    console.error("Suggestions fetch error:", error);
+    res.status(500).json({ error: 'Failed to fetch suggestions' });
+  }
+});
+
 app.get('/api/history', authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
     const sessions = await ChatSession.find({ userId: req.user.id })
-      .select('title createdAt projectId')
+      .select('title createdAt projectId isFavorite')
       .populate('projectId', 'name type')
-      .sort({ updatedAt: -1 })
+      .sort({ isFavorite: -1, updatedAt: -1 })
       .limit(50);
     res.json(sessions);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch history' });
+  }
+});
+
+app.put('/api/history/:id/favorite', authMiddleware, async (req: AuthRequest, res: Response) => {
+  try {
+    const session = await ChatSession.findOne({ _id: req.params.id, userId: req.user.id });
+    if (!session) return res.status(404).json({ error: 'Session not found' });
+    
+    session.isFavorite = !session.isFavorite;
+    await session.save();
+    
+    res.json(session);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update session' });
+  }
+});
+
+app.delete('/api/history/:id', authMiddleware, async (req: AuthRequest, res: Response) => {
+  try {
+    const session = await ChatSession.findOneAndDelete({ _id: req.params.id, userId: req.user.id });
+    if (!session) return res.status(404).json({ error: 'Session not found' });
+    res.json({ message: 'Session deleted' });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to delete session' });
   }
 });
 
